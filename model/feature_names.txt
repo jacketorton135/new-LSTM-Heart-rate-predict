@@ -1,0 +1,15 @@
+age
+sex
+cp
+trestbps
+chol
+fbs
+restecg
+thalach
+exang
+oldpeak
+slope
+thal
+age_thalach_ratio
+bp_thalach_ratio
+chol_age_ratio

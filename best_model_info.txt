@@ -1,0 +1,4 @@
+Best Model: Fold 1
+Accuracy: 0.786885
+AUC: 0.791126
+Combined Score: 0.789005
