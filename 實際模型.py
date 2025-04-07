@@ -102,7 +102,7 @@ def load_and_preprocess_data(file_path, test_size=0.2):
 
 def create_LSTM_model(input_dimension, dropout_rate=0.5):
     """
-    創建改進的 LSTM 神經網絡模型
+    創建更深層的 LSTM 神經網絡模型，移除早停機制
     
     參數：
     input_dimension: 輸入特徵的維度
@@ -112,22 +112,35 @@ def create_LSTM_model(input_dimension, dropout_rate=0.5):
     編譯過的 Keras 模型
     """
     model = Sequential([
-        # 雙向 LSTM，可以從兩個方向學習序列模式
+        # 第一層 雙向 LSTM
         Bidirectional(LSTM(128, activation='tanh', return_sequences=True, 
                            kernel_regularizer=tf.keras.regularizers.l2(0.001)), 
                       input_shape=(input_dimension, 1)),
-        BatchNormalization(),  # 加速訓練並提供輕微的正則化效果
-        Dropout(dropout_rate),  # 防止過擬合
+        BatchNormalization(),
+        Dropout(dropout_rate),
         
         # 第二層 LSTM
+        Bidirectional(LSTM(96, activation='tanh', return_sequences=True)),
+        BatchNormalization(),
+        Dropout(dropout_rate),
+        
+        # 第三層 LSTM - 新增
         Bidirectional(LSTM(64, activation='tanh', return_sequences=False)),
         BatchNormalization(),
         Dropout(dropout_rate),
         
-        # 全連接層
+        # 深層全連接層 - 增加層數
+        Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001)),
+        BatchNormalization(),
+        Dropout(0.4),
+        
         Dense(32, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001)),
         BatchNormalization(),
         Dropout(0.3),
+        
+        Dense(16, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001)),
+        BatchNormalization(),
+        Dropout(0.2),
         
         # 輸出層，二分類問題
         Dense(2, activation='softmax')
@@ -135,7 +148,7 @@ def create_LSTM_model(input_dimension, dropout_rate=0.5):
     
     # 編譯模型
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.1),
         loss='categorical_crossentropy',
         metrics=['accuracy', tf.keras.metrics.AUC(), 
                 tf.keras.metrics.Precision(), 
@@ -146,7 +159,7 @@ def create_LSTM_model(input_dimension, dropout_rate=0.5):
 
 def train_with_cross_validation(X, y, input_dimension, n_splits=5):
     """
-    使用交叉驗證訓練模型
+    使用交叉驗證訓練模型，移除早停機制
     
     參數：
     X: 特徵數據
@@ -185,14 +198,8 @@ def train_with_cross_validation(X, y, input_dimension, n_splits=5):
         # 創建模型
         model = create_LSTM_model(input_dimension)
         
-        # 回調函數 - 修復 .h5 問題
+        # 回調函數 - 只保留學習率調整，移除早停
         callbacks = [
-            # 提前停止，避免過擬合
-            EarlyStopping(
-                monitor='val_accuracy',
-                patience=30,
-                restore_best_weights=True
-            ),
             # 動態調整學習率
             ReduceLROnPlateau(
                 monitor='val_loss',
@@ -200,14 +207,13 @@ def train_with_cross_validation(X, y, input_dimension, n_splits=5):
                 patience=10,
                 min_lr=0.00001
             )
-            # 移除 ModelCheckpoint，以避免檔案格式錯誤
         ]
         
         # 訓練模型
         history = model.fit(
             X_train_reshaped, y_train_cat,
             validation_data=(X_val_reshaped, y_val_cat),
-            epochs=300,  # 足夠的訓練輪次，配合 EarlyStopping
+            epochs=150,  # 固定的訓練輪次，不使用早停
             batch_size=4,
             callbacks=callbacks,
             verbose=1
@@ -238,7 +244,7 @@ def train_with_cross_validation(X, y, input_dimension, n_splits=5):
 
 def train_final_model(X_train, y_train, X_test, y_test, input_dimension):
     """
-    訓練最終模型
+    訓練最終模型，移除早停機制
     
     參數：
     X_train, y_train: 訓練數據和標籤
@@ -260,14 +266,8 @@ def train_final_model(X_train, y_train, X_test, y_test, input_dimension):
     # 創建模型
     model = create_LSTM_model(input_dimension)
     
-    # 回調函數 - 修復 .h5 問題
+    # 回調函數 - 只保留學習率調整，移除早停
     callbacks = [
-        # 提前停止，避免過擬合
-        EarlyStopping(
-            monitor='val_accuracy',
-            patience=30,
-            restore_best_weights=True
-        ),
         # 動態調整學習率
         ReduceLROnPlateau(
             monitor='val_loss',
@@ -275,14 +275,13 @@ def train_final_model(X_train, y_train, X_test, y_test, input_dimension):
             patience=10,
             min_lr=0.00001
         )
-        # 移除 ModelCheckpoint，以避免檔案格式錯誤
     ]
     
-    # 訓練模型
+    # 訓練模型 - 增加訓練輪次以補償早停移除
     history = model.fit(
         X_train_reshaped, y_train_cat,
         validation_data=(X_test_reshaped, y_test_cat),
-        epochs=300,
+        epochs=250,  # 增加訓練輪次
         batch_size=32,
         callbacks=callbacks,
         verbose=1
@@ -321,7 +320,7 @@ def visualize_training_history(history):
 
 def evaluate_model(model, X_test, y_test):
     """
-    評估模型並顯示結果
+    評估模型並顯示結果 - 修復標籤顯示問題
     
     參數：
     model: 訓練好的模型
@@ -331,6 +330,10 @@ def evaluate_model(model, X_test, y_test):
     返回：
     準確率（float）
     """
+    # 設置中文字體支持
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'Microsoft YaHei', 'WenQuanYi Micro Hei']  # 優先使用的中文字體
+    plt.rcParams['axes.unicode_minus'] = False  # 解決負號顯示問題
+    
     # 重塑測試數據
     X_test_reshaped = X_test.reshape(-1, X_test.shape[1], 1)
     
@@ -352,10 +355,12 @@ def evaluate_model(model, X_test, y_test):
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=class_names, yticklabels=class_names)
-    plt.title('最終模型混淆矩陣')
-    plt.xlabel('預測標籤')
-    plt.ylabel('真實標籤')
+    plt.title('最終模型混淆矩陣', fontsize=14)
+    plt.xlabel('預測標籤', fontsize=12)
+    plt.ylabel('真實標籤', fontsize=12)
     plt.tight_layout()
+    # 可選：保存圖片而不是顯示，以避免字體問題
+    # plt.savefig('confusion_matrix.png', dpi=300, bbox_inches='tight')
     plt.show()
     
     # ROC 曲線
@@ -364,10 +369,10 @@ def evaluate_model(model, X_test, y_test):
     roc_auc = auc(fpr, tpr)
     plt.plot(fpr, tpr, label=f'ROC 曲線 (AUC = {roc_auc:.4f})')
     plt.plot([0, 1], [0, 1], 'k--')
-    plt.xlabel('偽陽性率 (False Positive Rate)')
-    plt.ylabel('真陽性率 (True Positive Rate)')
-    plt.title('ROC 曲線')
-    plt.legend(loc='lower right')
+    plt.xlabel('偽陽性率 (False Positive Rate)', fontsize=12)
+    plt.ylabel('真陽性率 (True Positive Rate)', fontsize=12)
+    plt.title('ROC 曲線', fontsize=14)
+    plt.legend(loc='lower right', fontsize=10)
     plt.tight_layout()
     plt.show()
     
@@ -375,10 +380,10 @@ def evaluate_model(model, X_test, y_test):
     plt.figure(figsize=(8, 6))
     precision, recall, _ = precision_recall_curve(y_test, y_pred_probs[:, 1])
     plt.plot(recall, precision, label='Precision-Recall 曲線')
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall 曲線')
-    plt.legend(loc='lower left')
+    plt.xlabel('Recall', fontsize=12)
+    plt.ylabel('Precision', fontsize=12)
+    plt.title('Precision-Recall 曲線', fontsize=14)
+    plt.legend(loc='lower left', fontsize=10)
     plt.tight_layout()
     plt.show()
     
